@@ -64,7 +64,7 @@ create table if not exists public.records (
   next_date  date,
   liters     numeric check (liters is null or liters >= 0),
   price      numeric check (price is null or price >= 0),
-  full       boolean not null default true,
+  is_full    boolean not null default true,
   shop       text not null default '',
   category   text not null default '',
   created_at timestamptz not null default now(),

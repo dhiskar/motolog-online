@@ -100,7 +100,7 @@ window.MLCloud = (function () {
       next_date: r.nextDate || null,
       liters: numOrNull(r.liters),
       price: numOrNull(r.price),
-      full: r.full !== false,
+      is_full: r.full !== false,
       shop: text(r.shop, 70),
       category: text(r.category, 40),
       created_at: stamp(r.createdAt)
@@ -170,7 +170,7 @@ window.MLCloud = (function () {
       nextDate: r.next_date || '',
       liters: r.liters == null ? null : Number(r.liters),
       price: r.price == null ? null : Number(r.price),
-      full: r.full !== false,
+      full: r.is_full !== false,
       shop: r.shop || '',
       category: r.category || '',
       createdAt: epoch(r.created_at),
