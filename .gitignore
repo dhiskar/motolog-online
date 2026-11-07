@@ -1,0 +1,27 @@
+# dependensi
+node_modules/
+.pnp
+.pnp.js
+
+# hasil build
+dist/
+build/
+.next/
+.out/
+
+# variabel lingkungan & rahasia (jangan pernah di-commit)
+.env
+.env.*
+!.env.example
+
+# log & cache
+*.log
+.cache/
+.temp/
+tmp/
+
+# OS & editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
