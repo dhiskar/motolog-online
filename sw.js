@@ -7,7 +7,7 @@
    =========================================================== */
 'use strict';
 
-const CACHE_VERSION = 'motolog-v1.0.2';
+const CACHE_VERSION = 'motolog-v2.0.0';
 const CACHE_NAME = CACHE_VERSION;
 const INDEX_URL = new URL('./index.html', self.location).href;
 
@@ -15,10 +15,13 @@ const PRECACHE_URLS = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './vendor/supabase.js',
+  './assets/config.js',
   './assets/style.css',
   './assets/core.js',
   './assets/ui.js',
   './assets/sheets.js',
+  './assets/cloud.js',
   './assets/app.js',
   './icons/icon-192.png',
   './icons/icon-512.png',

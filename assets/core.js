@@ -1,6 +1,7 @@
 /* ===========================================================
    MotoLog — core: data, state, perhitungan
-   Data disimpan 100% di localStorage perangkat.
+   Sumber data: Supabase (lewat MLCloud). localStorage hanya
+   dipakai untuk cache tema dan impor data versi offline.
    =========================================================== */
 'use strict';
 
@@ -8,7 +9,8 @@ window.ML = (function () {
   const ML = {};
 
   const STORAGE_KEY = 'motolog.state.v1';
-  const APP_VERSION = '1.0.2';
+  const THEME_KEY = 'motolog.theme';
+  const APP_VERSION = '2.0.0';
 
   const TYPE_META = {
     oil:    { label: 'Ganti oli',   short: 'Oli',    icon: 'droplet', tone: 'oil',    color: '#f97316' },
@@ -110,10 +112,54 @@ window.ML = (function () {
   const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ESC[c]);
 
-  let uidCounter = 0;
-  function uid(prefix) {
-    uidCounter = (uidCounter + 1) % 1000;
-    return (prefix || 'id') + Date.now().toString(36) + uidCounter.toString(36) + Math.random().toString(36).slice(2, 6);
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function isUuid(v) {
+    return UUID_RE.test(String(v == null ? '' : v));
+  }
+
+  // ID baru harus UUID asli agar cocok dengan kolom uuid di Postgres.
+  function uid() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      try { return window.crypto.randomUUID(); } catch (e) { /* lanjut ke fallback */ }
+    }
+    const bytes = new Uint8Array(16);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+    else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' +
+      hex.slice(16, 20) + '-' + hex.slice(20);
+  }
+
+  // Data dari aplikasi offline memakai ID lama (bukan UUID). Ganti ID lama
+  // dengan UUID baru sambil memperbarui semua referensinya.
+  function remapIds(input) {
+    let data;
+    try { data = JSON.parse(JSON.stringify(input)); } catch (e) { data = input; }
+    if (!data || typeof data !== 'object') return data;
+
+    const map = {};
+    (data.bikes || []).forEach((b) => {
+      if (!b || !b.id || isUuid(b.id)) return;
+      map[b.id] = uid();
+      b.id = map[b.id];
+    });
+    (data.records || []).forEach((r) => {
+      if (!r) return;
+      if (r.bikeId && map[r.bikeId]) r.bikeId = map[r.bikeId];
+      if (!r.id || !isUuid(r.id)) r.id = uid();
+    });
+    (data.reminders || []).forEach((r) => {
+      if (!r) return;
+      if (r.bikeId && map[r.bikeId]) r.bikeId = map[r.bikeId];
+      if (!r.id || !isUuid(r.id)) r.id = uid();
+    });
+    if (data.settings && data.settings.activeBike && map[data.settings.activeBike]) {
+      data.settings.activeBike = map[data.settings.activeBike];
+    }
+    return data;
   }
 
   function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
@@ -130,9 +176,7 @@ window.ML = (function () {
         oilKm: 2500,
         oilMonths: 4,
         activeBike: null,
-        installDismissed: false,
-        lastBackupAt: null,
-        backupNudgeAt: null
+        installDismissed: false
       }
     };
   }
@@ -202,13 +246,16 @@ window.ML = (function () {
       }));
     }
 
+    // Jaga integritas relasi: buang catatan/pengingat yang motornya tidak ada.
+    const bikeIds = new Set(st.bikes.map((b) => b.id));
+    st.records = st.records.filter((r) => bikeIds.has(r.bikeId));
+    st.reminders = st.reminders.filter((r) => bikeIds.has(r.bikeId));
+
     const s = input.settings || {};
     st.settings.theme = ['auto', 'light', 'dark'].indexOf(s.theme) >= 0 ? s.theme : 'auto';
     st.settings.oilKm = Math.max(200, num(s.oilKm) || 2500);
     st.settings.oilMonths = Math.max(1, Math.min(36, num(s.oilMonths) || 4));
     st.settings.installDismissed = !!s.installDismissed;
-    st.settings.lastBackupAt = typeof s.lastBackupAt === 'string' && s.lastBackupAt ? s.lastBackupAt : null;
-    st.settings.backupNudgeAt = typeof s.backupNudgeAt === 'string' && s.backupNudgeAt ? s.backupNudgeAt : null;
     if (st.bikes.some((b) => b.id === s.activeBike)) st.settings.activeBike = s.activeBike;
     else st.settings.activeBike = st.bikes[0] ? st.bikes[0].id : null;
 
@@ -219,13 +266,23 @@ window.ML = (function () {
   ML.state = state;
 
   function loadState() {
+    // Versi online tidak memakai localStorage sebagai sumber data.
+    // Fungsi dipertahankan agar pemanggil lama tidak rusak.
+    replaceState(defaultState());
+  }
+
+  function hasLocalState() {
+    try { return !!localStorage.getItem(STORAGE_KEY); } catch (e) { return false; }
+  }
+
+  function readLocalState() {
     let raw = null;
     try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { raw = null; }
+    if (!raw) return null;
     let parsed = null;
-    if (raw) {
-      try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
-    }
-    replaceState(parsed || defaultState());
+    try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+    if (!parsed || typeof parsed !== 'object') return null;
+    return remapIds(normalize(parsed));
   }
 
   function replaceState(next) {
@@ -235,20 +292,13 @@ window.ML = (function () {
   }
 
   function persist() {
-    let ok = false;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      ok = true;
-    } catch (e) {
-      if (ML.toast) ML.toast('Penyimpanan browser penuh. Hapus foto atau aktifkan backup otomatis ke file.', 'bad');
-      else console.warn('Gagal menyimpan', e);
+    // Simpan tema secara lokal agar tampilan tidak berkedip saat dibuka.
+    try { localStorage.setItem(THEME_KEY, state.settings.theme); } catch (e) { /* diabaikan */ }
+    // Data utama dikirim ke Supabase (debounced).
+    if (ML.onSave) {
+      try { ML.onSave(); } catch (e) { /* sinkronisasi tidak boleh mengganggu UI */ }
     }
-    // Backup otomatis tetap dijalankan walau localStorage penuh, supaya data
-    // masih punya salinan di file.
-    if (ML.onPersist) {
-      try { ML.onPersist(); } catch (e) { /* backup otomatis tidak boleh mengganggu penyimpanan */ }
-    }
-    return ok;
+    return true;
   }
 
   function commit(opts) {
@@ -493,6 +543,8 @@ window.ML = (function () {
   ML.clean = clean;
   ML.esc = esc;
   ML.uid = uid;
+  ML.isUuid = isUuid;
+  ML.remapIds = remapIds;
   ML.clamp = clamp;
   ML.todayISO = todayISO;
   ML.isoOf = isoOf;
@@ -503,6 +555,9 @@ window.ML = (function () {
   ML.monthTitle = monthTitle;
 
   ML.loadState = loadState;
+  ML.hasLocalState = hasLocalState;
+  ML.readLocalState = readLocalState;
+  ML.normalize = normalize;
   ML.replaceState = replaceState;
   ML.resetState = resetState;
   ML.persist = persist;

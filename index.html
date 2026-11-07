@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>MotoLog — Catatan & Perawatan Motor</title>
-  <meta name="description" content="Catat ganti oli, servis, bensin, dan pengeluaran sepeda motor. Data tersimpan lokal di HP, bisa dipakai offline dan diinstal seperti aplikasi.">
+  <meta name="description" content="Catat ganti oli, servis, bensin, dan pengeluaran sepeda motor. Data tersimpan di akun kamu dan bisa dibuka dari HP atau laptop lain.">
   <meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
   <meta name="color-scheme" content="dark light">
@@ -19,9 +19,7 @@
   <script>
     (function () {
       try {
-        var raw = localStorage.getItem('motolog.state.v1');
-        var st = raw ? JSON.parse(raw) : null;
-        var t = st && st.settings && st.settings.theme ? st.settings.theme : 'auto';
+        var t = localStorage.getItem('motolog.theme') || 'auto';
         if (t === 'auto') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
         document.documentElement.style.colorScheme = t;
@@ -71,7 +69,36 @@
     <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
   </svg>
 
-  <div id="app">
+  <div id="boot" class="boot" hidden>
+    <span class="boot-spinner" aria-hidden="true"></span>
+    <p id="boot-msg">Menghubungkan…</p>
+    <button class="btn soft sm" type="button" data-act="retry-boot" hidden>Muat ulang</button>
+  </div>
+
+  <section id="auth" class="auth" hidden>
+    <div class="auth-card card">
+      <div class="auth-brand">
+        <span class="brand-mark"><svg class="ic" aria-hidden="true"><use href="#i-bike"></use></svg></span>
+        <div class="auth-brand-txt"><b>Moto<b>Log</b></b><small>Catatan &amp; perawatan motor</small></div>
+      </div>
+      <h1 id="auth-title">Masuk ke akun kamu</h1>
+      <p id="auth-sub" class="auth-sub">Data motor dan catatan tersimpan di akun, bisa dibuka dari HP atau laptop lain.</p>
+      <form id="auth-form" data-form="auth" novalidate>
+        <label class="field"><span>Email</span>
+          <input type="email" name="email" required autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" placeholder="nama@email.com">
+        </label>
+        <label class="field"><span>Password</span>
+          <input type="password" name="password" required minlength="6" autocomplete="current-password" placeholder="Minimal 6 karakter">
+        </label>
+        <p class="auth-error" id="auth-error" role="alert" hidden></p>
+        <button class="btn primary block" type="submit" id="auth-submit">Masuk</button>
+      </form>
+      <button class="auth-switch" type="button" data-act="auth-mode" id="auth-switch">Belum punya akun? Buat akun</button>
+      <p class="auth-note">Data kamu hanya bisa diakses dari akun ini.</p>
+    </div>
+  </section>
+
+  <div id="app" hidden>
     <header id="topbar" class="topbar"></header>
     <main id="view" class="view" tabindex="-1"></main>
     <nav id="tabbar" class="tabbar" aria-label="Navigasi utama"></nav>
@@ -87,9 +114,12 @@
     </div>
   </noscript>
 
+  <script src="./vendor/supabase.js" defer></script>
+  <script src="./assets/config.js" defer></script>
   <script src="./assets/core.js" defer></script>
   <script src="./assets/ui.js" defer></script>
   <script src="./assets/sheets.js" defer></script>
+  <script src="./assets/cloud.js" defer></script>
   <script src="./assets/app.js" defer></script>
 </body>
 </html>

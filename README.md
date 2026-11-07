@@ -1,145 +1,180 @@
-# MotoLog 🏍️
+# MotoLog Online 🏍️
 
-Aplikasi web (PWA) sederhana untuk mencatat perawatan sepeda motor: ganti oli, servis/repair, bensin, dan pengeluaran lainnya. Dibuat mobile-first untuk dipakai di HP, bisa diinstal ke layar utama, dan tetap berjalan tanpa internet.
+Aplikasi web (PWA) untuk mencatat perawatan sepeda motor: ganti oli, servis, bensin, dan pengeluaran lainnya. Versi online ini menyimpan data di **akun Supabase** sehingga bisa dibuka dari HP, tablet, atau laptop lain dengan akun yang sama.
 
-**Semua data disimpan lokal di HP kamu** (localStorage). Tidak ada server, tidak ada akun, tidak ada data yang dikirim ke mana pun.
+- Frontend: HTML + CSS + JavaScript murni (tanpa build step), mobile-first, bisa diinstal ke layar utama.
+- Backend: **Supabase** (Postgres + Auth) dengan **Row Level Security**.
+- Hosting: **Cloudflare Pages** (gratis, bandwidth statis tidak dibatasi).
+- Setiap akun hanya bisa melihat dan mengubah datanya sendiri.
+
+> Versi offline v1.0.2 tetap tersedia terpisah di [dhiskar.github.io/motolog](https://dhiskar.github.io/motolog/). Repo ini adalah versi online dan tidak mengubah deployment offline tersebut.
 
 ---
 
 ## Fitur
 
-- **Multi-motor** — kelola beberapa motor sekaligus, ganti motor aktif dari header.
-- **Ganti oli** — riwayat, interval km/bulan, status "sudah waktunya" otomatis.
+- **Multi-motor** — kelola beberapa motor, ganti motor aktif dari header.
+- **Ganti oli** — riwayat, interval km/bulan, status “sudah waktunya” otomatis.
 - **Servis & perbaikan** — bengkel, kategori, biaya, catatan, foto nota.
 - **Bensin** — liter, harga/liter, total otomatis, hitung konsumsi km/L.
-- **Pengeluaran lain** — pajak, aksesori, cuci, dan lain-lain.
-- **Dashboard** — ringkasan biaya bulan ini, total km, status oli, pengingat terdekat.
+- **Pengeluaran lain** — pajak, asuransi, parkir, aksesori, dan lain-lain.
+- **Dashboard** — ringkasan biaya bulan ini, total km, status oli, aktivitas terakhir.
 - **Riwayat** — filter jenis, pencarian, edit & hapus.
 - **Statistik** — grafik pengeluaran bulanan, rincian per kategori, efisiensi bahan bakar.
 - **Pengingat** — pengingat manual (pajak, servis, dll.) dengan target tanggal/odo.
-- **Backup** — simpan JSON langsung ke folder pilihan HP lewat dialog “Simpan sebagai” (Chrome Android 132+), fallback ke folder Download; impor JSON; ekspor CSV untuk Excel/Spreadsheet.
-- **Tema** — gelap, terang, atau ikut sistem.
-- **Offline & installable** — service worker + manifest, bisa dipasang seperti aplikasi.
+- **Akun** — daftar/masuk dengan email + password, data tersinkron antar perangkat.
+- **Backup** — ekspor/impor JSON dan ekspor CSV manual (tanpa backup otomatis ke file).
+- **Impor data lokal** — pindahkan data aplikasi offline di HP yang sama ke akun online.
+- **PWA** — bisa diinstal; app shell di-cache agar tampilan cepat dibuka.
+
+Versi online bersifat **online-only**: data utama selalu dibaca dan ditulis ke Supabase. Tanpa internet, aplikasi menampilkan pesan dan tombol muat ulang (tidak ada antrean tulis offline pada v1).
 
 ---
 
-## Cara pakai di HP
+## 1. Siapkan Supabase
 
-1. Buka alamat GitHub Pages kamu di browser HP (Chrome / Samsung Internet).
-2. Tambahkan motor pertama saat aplikasi meminta.
-3. Tekan tombol **+** untuk menambah catatan.
-4. Untuk memasang: menu browser → **Instal aplikasi** / **Tambahkan ke layar utama**.
-5. Buka MotoLog dari layar utama. Data tetap ada meski offline.
+1. Buat akun di [supabase.com](https://supabase.com) lalu **New project**.
+2. Buka **SQL Editor → New query**, tempel seluruh isi [`supabase/schema.sql`](supabase/schema.sql), lalu **Run**.
+   - File ini aman dijalankan ulang (idempotent).
+   - Isinya: tabel `profiles`, `bikes`, `records`, `reminders`, trigger `updated_at`, trigger profil otomatis, indeks, dan kebijakan RLS.
+3. Buka **Project Settings → API**, catat:
+   - **Project URL** (contoh `https://abcdefghijklm.supabase.co`)
+   - **anon public key**
+4. Isi keduanya di [`assets/config.js`](assets/config.js):
 
-> **Penting:** data terikat pada browser dan alamat situs. Menghapus data browser, memakai mode incognito, atau mengganti domain dapat menghilangkan data. Aktifkan **Pengaturan → Backup otomatis ke file** agar data punya salinan di penyimpanan HP.
-
-### Menyimpan backup ke file HP
-
-- **Chrome Android 132+ / Chrome desktop:** tombol **Ekspor backup (JSON)** membuka dialog **“Simpan sebagai”**, sehingga kamu bisa memilih folder di penyimpanan HP dan nama filenya.
-- **Browser lama / Samsung Internet:** file otomatis masuk ke folder **Download**.
-- File JSON berisi semua motor, catatan, pengingat, dan foto. Simpan juga salinan ke Google Drive atau WhatsApp.
-- Untuk memulihkan: **Pengaturan → Impor backup**.
-- Aplikasi juga berusaha meminta **penyimpanan persisten** agar data tidak mudah dihapus otomatis oleh browser saat ruang penyimpanan menipis. Ini bersifat best-effort dan tetap tidak melindungi dari penghapusan manual “cookie & data situs”.
-
-### Backup otomatis ke file
-
-1. Buka **Pengaturan → Backup otomatis ke file**, lalu pilih lokasi file (misalnya folder **Documents**).
-2. Setiap kali kamu menyimpan, mengubah, atau menghapus catatan, MotoLog langsung menulis ulang file backup itu (sekitar 1 detik setelah perubahan).
-3. Status di Pengaturan menunjukkan nama file dan waktu backup terakhir.
-
-Batasan yang perlu diketahui:
-
-- Browser hanya bisa menulis saat MotoLog sedang terbuka. Saat aplikasi ditutup, data tetap aman di penyimpanan browser dan akan ditulis ke file begitu aplikasi dibuka lagi.
-- Setelah browser ditutup total, Chrome kadang meminta izin akses file lagi. Bila muncul tulisan **“Butuh izin akses file”**, ketuk baris tersebut sekali untuk mengizinkan.
-- Fitur ini paling andal pada Chrome Android 132+ dan saat MotoLog dipasang sebagai aplikasi (PWA). Pada browser yang belum mendukung, gunakan ekspor manual.
-- Backup otomatis tetap tidak bisa mencegah penghapusan manual “cookie & data situs”; file backup di penyimpanan HP tetap ada dan bisa dipulihkan lewat **Impor backup**.
-
----
-
-## Menjalankan secara lokal
-
-Karena aplikasi memakai service worker dan manifest, jalankan lewat server lokal (bukan `file://`).
-
-```bash
-# salah satu pilihan
-npx serve .
-python -m http.server 8080
+```js
+window.MOTOLOG_CONFIG = {
+  SUPABASE_URL: 'https://abcdefghijklm.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIs...'
+};
 ```
 
-Lalu buka `http://localhost:8080`.
+> Kunci `anon` memang aman dipublikasikan. Akses data dibatasi oleh RLS: setiap baris hanya bisa dibaca/ditulis jika `auth.uid() = user_id`.
+
+### Pengaturan Auth yang disarankan (v1)
+
+- **Authentication → Providers → Email**: aktifkan.
+- **Authentication → Sign In / Up → Email confirmation**: **matikan** untuk v1.
+  - Dengan konfirmasi email menyala, pendaftaran tidak langsung masuk dan pengiriman email bawaan Supabase sangat dibatasi (rate limit).
+  - Jika tetap ingin konfirmasi email, gunakan SMTP sendiri di Supabase.
+- **Authentication → URL Configuration**: tambahkan URL Cloudflare Pages kamu ke *Site URL* dan *Redirect URLs* setelah deploy.
 
 ---
 
-## Deploy ke GitHub Pages
+## 2. Jalankan secara lokal
 
-1. Buat repository baru di GitHub, misalnya `motolog`.
-2. Dari folder proyek ini:
+Karena memakai modul dan service worker, buka lewat server HTTP, bukan `file://`:
 
-   ```bash
-   git init
-   git add .
-   git commit -m "MotoLog v1.0.0"
-   git branch -M main
-   git remote add origin https://github.com/USERNAME/motolog.git
-   git push -u origin main
-   ```
-
-3. Di GitHub buka **Settings → Pages**.
-4. Pada **Build and deployment → Source**, pilih **Deploy from a branch**.
-5. Pilih branch `main` dan folder `/ (root)`, lalu **Save**.
-6. Tunggu 1–2 menit. Situs tersedia di:
-
-   ```
-   https://USERNAME.github.io/motolog/
-   ```
-
-Aplikasi memakai path relatif (`./`), jadi tetap berjalan di subfolder repository. File `.nojekyll` sudah disertakan agar GitHub Pages tidak memproses file dengan Jekyll.
-
-### Memperbarui versi
-
-1. Ubah `CACHE_VERSION` di `sw.js` (mis. `motolog-v1.0.1`) dan `APP_VERSION` di `assets/core.js`.
-2. Commit dan push.
-3. Buka aplikasi, lalu tutup dan buka kembali (atau refresh dua kali) agar service worker mengambil versi baru.
-
----
-
-## Struktur proyek
-
-```
-motolog/
-├─ index.html               # app shell + ikon SVG
-├─ manifest.webmanifest     # metadata PWA
-├─ sw.js                    # service worker (offline cache)
-├─ .nojekyll                # agar GitHub Pages tidak memakai Jekyll
-├─ assets/
-│  ├─ style.css             # desain & tema
-│  ├─ core.js               # data model, penyimpanan, perhitungan
-│  ├─ ui.js                 # render semua halaman
-│  ├─ sheets.js             # bottom sheet, form, simpan
-│  └─ app.js                # event, ekspor/impor, PWA
-└─ icons/                   # ikon PNG 192/512/maskable/apple
+```powershell
+# dari folder proyek
+python -m http.server 8099 --bind 127.0.0.1
 ```
 
+Buka `http://127.0.0.1:8099/`.
+
+Jika `assets/config.js` masih kosong, halaman login tampil dengan pesan konfigurasi dan tombol masuk dinonaktifkan.
+
 ---
 
-## Pemecahan masalah
+## 3. Deploy ke Cloudflare Pages
 
-| Masalah | Solusi |
+1. Push repo ini ke GitHub/GitLab.
+2. Buka [Cloudflare Dashboard → Workers & Pages → Create → Pages → Connect to Git](https://dash.cloudflare.com/).
+3. Pilih repo, lalu isi:
+   - **Framework preset**: `None`
+   - **Build command**: kosongkan
+   - **Build output directory**: `/` (root repo)
+4. **Save and Deploy**. Situs akan tersedia di `https://<nama>.pages.dev`.
+5. Setelah punya domain final, kembali ke Supabase **Authentication → URL Configuration** dan sesuaikan **Site URL**.
+
+Tidak ada proses build. Semua file statis (termasuk `vendor/supabase.js`) dilayani langsung oleh Cloudflare Pages.
+
+### Alternatif: upload langsung
+
+Bisa juga memakai **Direct Upload** di Cloudflare Pages dengan mengunggah isi repo (kecuali `.git`, `dev`, dan file pengembangan lain).
+
+---
+
+## 4. Impor data dari aplikasi offline
+
+Data offline disimpan di `localStorage` dengan kunci `motolog.state.v1` pada perangkat yang sama dan origin yang sama.
+
+1. Buka aplikasi offline lama di HP yang sama, lakukan **Ekspor backup (JSON)** sebagai cadangan.
+2. Buka aplikasi online di browser yang sama.
+3. Masuk/daftar akun.
+4. Buka **Pengaturan → Impor data lokal** (hanya muncul jika data lokal terdeteksi).
+5. Konfirmasi. ID lama otomatis diubah menjadi UUID, lalu data dikirim ke akun.
+6. Setelah berhasil, data lokal dihapus dari perangkat agar tidak tertukar.
+
+Alternatif lintas perangkat: gunakan **Pengaturan → Impor backup** dengan file JSON hasil ekspor aplikasi offline. Struktur file yang sama juga diterima.
+
+> **Perhatian:** data lokal hanya terbaca jika aplikasi online dibuka dari origin yang sama dengan aplikasi offline. Jika berbeda domain, gunakan file JSON.
+
+---
+
+## 5. Struktur data & keamanan
+
+Tabel di Supabase:
+
+| Tabel | Isi |
 | --- | --- |
-| Ikon install tidak muncul | Pastikan dibuka via HTTPS (GitHub Pages), bukan `file://`. Di Samsung Internet gunakan menu → *Tambahkan halaman ke → Layar utama*. |
-| Perubahan tidak muncul | Naikkan `CACHE_VERSION` di `sw.js`, push, lalu tutup-buka aplikasi. |
-| Data hilang | Data hanya ada di browser tersebut. Pulihkan dari backup JSON di **Pengaturan → Impor backup**. |
-| Foto tidak tersimpan | Ukuran localStorage terbatas (±5 MB). Foto otomatis dikompres, tetapi banyak foto bisa memenuhi kuota. Ekspor backup lalu hapus catatan lama bila perlu. |
-| Grafik kosong | Tambahkan catatan dengan tanggal di bulan yang dipilih. |
+| `profiles` | Pengaturan per akun: tema, interval oli, motor aktif, status banner instal. |
+| `bikes` | Motor milik pengguna. |
+| `records` | Catatan oli/servis/BBM/pengeluaran, terhubung ke motor. |
+| `reminders` | Pengingat manual, terhubung ke motor. |
+
+- Semua tabel punya kolom `user_id uuid not null default auth.uid()`.
+- RLS aktif dengan policy `auth.uid() = user_id` untuk `select`, `insert`, `update`, `delete`.
+- Foreign key gabungan `(bike_id, user_id)` memastikan catatan/pengingat tidak bisa menempel ke motor milik akun lain.
+- Foto disimpan sebagai data URL JPEG terkompresi (±720 px) di kolom `text` untuk v1. Untuk skala besar, migrasikan ke Supabase Storage.
+- Sinkronisasi bersifat diff-based: `ML.persist()` mengantrekan penyimpanan (debounce 700 ms), lalu `assets/cloud.js` mengirim upsert/delete per tabel dan menyimpan snapshot setelah sukses.
+
+### Biaya
+
+- **Supabase Free**: $0 — 500 MB database, 50.000 MAU, 2 project. Project gratis otomatis **di-pause setelah ±7 hari tanpa aktivitas** dan perlu diaktifkan manual dari dashboard.
+- **Supabase Pro**: $25/bulan — 8 GB database, backup harian, tidak di-pause.
+- **Cloudflare Pages Free**: $0 — 500 build/bulan, bandwidth statis tidak dibatasi, 25 MiB per file.
+
+Untuk pemakaian pribadi/keluarga, kombinasi gratis biasanya cukup. Jika ingin selalu aktif tanpa risiko pause, gunakan Supabase Pro.
 
 ---
 
-## Privasi
+## 6. Pengembangan
 
-MotoLog tidak memiliki backend. Seluruh data (termasuk foto) tersimpan di `localStorage` perangkat dan tidak pernah dikirim ke internet. Satu-satunya koneksi keluar adalah permintaan file aplikasi dari GitHub Pages.
+```
+index.html                 # shell, markup auth/boot/app, sprite ikon
+manifest.webmanifest       # metadata PWA
+sw.js                      # service worker (cache app shell)
+assets/
+  config.js                # URL + anon key Supabase (isi manual)
+  core.js                  # state, normalisasi, UUID, perhitungan
+  ui.js                    # render dashboard/riwayat/statistik/motor/pengaturan
+  sheets.js                # dialog/form, simpan catatan/motor/pengingat, foto
+  cloud.js                 # auth Supabase + sinkronisasi data
+  app.js                   # boot/auth, event, ekspor/impor, PWA
+  style.css                # seluruh tampilan
+vendor/supabase.js         # Supabase JS v2 (UMD, di-vendor agar tanpa CDN)
+supabase/schema.sql        # skema database + RLS (jalankan sekali)
+icons/                     # ikon PWA
+```
+
+Urutan script di `index.html` penting: `vendor/supabase.js` → `config.js` → `core.js` → `ui.js` → `sheets.js` → `cloud.js` → `app.js`.
+
+### Menambah perubahan skema
+
+1. Ubah `supabase/schema.sql` (tetap idempotent jika memungkinkan).
+2. Jalankan ulang file itu di SQL Editor.
+3. Sesuaikan mapping di `assets/cloud.js` (`bikeRow`, `recordRow`, `reminderRow`, `settingsRow`, dan fungsi `*FromRow`).
+4. Jika mengubah cache, naikkan `CACHE_VERSION` di `sw.js`.
+
+### Tips rilis
+
+- Selalu uji login, tambah catatan, edit, hapus, dan impor data di akun uji sebelum deploy.
+- Ekspor backup JSON berkala tetap disarankan, meskipun data sudah di server.
+- Jangan commit kunci `service_role` Supabase. Hanya `anon` key yang boleh ada di frontend.
 
 ---
 
 ## Lisensi
 
-MIT — lihat [LICENSE](./LICENSE).
+MIT — lihat [`LICENSE`](LICENSE).

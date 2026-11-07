@@ -175,34 +175,11 @@
     }
     html += alerts.join('');
 
-    /* pengingat backup */
-    const ab = ML.autoBackup ? ML.autoBackup.status() : null;
-    if (ab && ab.enabled && ab.needsPermission) {
-      html += `<div class="install-banner backup-banner">
-        <span class="ib-ico">${icon('shield')}</span>
-        <span class="ib-txt"><b>Izinkan backup otomatis</b><small>Perubahan belum bisa ditulis ke file backup.</small></span>
-        <button class="btn primary sm" data-act="auto-backup-perm">Izinkan</button>
-      </div>`;
-    } else if (ab && !ab.enabled && ML.autoBackup.supported()) {
-      const lastBackupDay = S.settings.lastBackupAt ? String(S.settings.lastBackupAt).slice(0, 10) : '';
-      const backupAge = lastBackupDay ? ML.daysBetween(lastBackupDay, ML.todayISO()) : null;
-      const nudgeDay = S.settings.backupNudgeAt ? String(S.settings.backupNudgeAt).slice(0, 10) : '';
-      const nudgeAge = nudgeDay ? ML.daysBetween(nudgeDay, ML.todayISO()) : null;
-      if ((backupAge == null || backupAge >= 7) && (nudgeAge == null || nudgeAge >= 7)) {
-        html += `<div class="install-banner backup-banner">
-          <span class="ib-ico">${icon('shield')}</span>
-          <span class="ib-txt"><b>Amankan data kamu</b><small>Aktifkan backup otomatis agar setiap catatan ikut tersimpan ke file di HP.</small></span>
-          <button class="btn primary sm" data-act="auto-backup">Aktifkan</button>
-          <button class="icon-btn" data-act="dismiss-backup" aria-label="Tutup">${icon('x')}</button>
-        </div>`;
-      }
-    }
-
     /* install */
     if (!isStandalone() && !S.settings.installDismissed) {
       html += `<div class="install-banner">
         <span class="ib-ico">${icon('install')}</span>
-        <span class="ib-txt"><b>Instal MotoLog di HP</b><small>Buka cepat dari layar utama, tetap jalan tanpa internet.</small></span>
+        <span class="ib-txt"><b>Instal MotoLog di HP</b><small>Buka cepat dari layar utama seperti aplikasi biasa.</small></span>
         <button class="btn primary sm" data-act="install">Pasang</button>
         <button class="icon-btn" data-act="dismiss-install" aria-label="Tutup">${icon('x')}</button>
       </div>`;
@@ -300,12 +277,12 @@
     return `<section class="onboard">
       <div class="onboard-art">${icon('bike')}</div>
       <h1>Semua perawatan motor, rapi di satu tempat</h1>
-      <p>Catat ganti oli, servis, bensin, dan pengeluaran. Data tersimpan di HP kamu dan tetap bisa dibuka tanpa internet.</p>
+      <p>Catat ganti oli, servis, bensin, dan pengeluaran. Data tersimpan di akun kamu dan bisa dibuka dari perangkat lain.</p>
       <button class="btn primary block" data-act="add-bike">${icon('plus')} Tambah motor pertama</button>
       <ul class="onboard-list">
         <li><span class="o-ico">${icon('droplet')}</span><span><b>Pengingat oli</b> otomatis dari KM dan tanggal</span></li>
         <li><span class="o-ico">${icon('chart')}</span><span><b>Statistik biaya</b> bulanan dan konsumsi BBM</span></li>
-        <li><span class="o-ico">${icon('shield')}</span><span><b>Data lokal</b> — tidak dikirim ke server mana pun</span></li>
+        <li><span class="o-ico">${icon('shield')}</span><span><b>Sinkron antar perangkat</b> — masuk dengan akun yang sama</span></li>
       </ul>
     </section>`;
   }
@@ -623,29 +600,27 @@
     const installed = isStandalone();
     const themes = [['auto', 'Otomatis', 'monitor'], ['light', 'Terang', 'sun'], ['dark', 'Gelap', 'moon']];
     const currentTheme = S.settings.theme || 'auto';
-    const lastBackup = S.settings.lastBackupAt ? new Date(S.settings.lastBackupAt) : null;
-    const backupLabel = lastBackup && !isNaN(lastBackup.getTime())
-      ? 'terakhir ' + lastBackup.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
-      : 'belum pernah backup';
+    const email = (MLCloud && MLCloud.userEmail && MLCloud.userEmail()) || '—';
+    const hasLocal = ML.localDataAvailable ? ML.localDataAvailable() : false;
+    const syncText = MLCloud && MLCloud.statusText ? MLCloud.statusText() : '—';
 
-    const ab = ML.autoBackup ? ML.autoBackup.status() : { enabled: false, needsPermission: false };
-    const abSupported = ML.autoBackup ? ML.autoBackup.supported() : false;
-    let abLabel;
-    if (!abSupported) {
-      abLabel = 'Belum didukung browser ini · gunakan ekspor manual';
-    } else if (!ab.enabled) {
-      abLabel = 'Tulis file otomatis setiap ada perubahan';
-    } else if (ab.needsPermission) {
-      abLabel = 'Butuh izin akses file · ketuk untuk mengizinkan';
-    } else {
-      const when = ab.lastAt ? new Date(ab.lastAt) : null;
-      const whenText = when && !isNaN(when.getTime())
-        ? when.toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-        : 'menunggu perubahan';
-      abLabel = 'Aktif · ' + (ab.fileName || 'file backup') + ' · ' + whenText + ' · ketuk untuk mematikan';
-    }
+    return `${pageHead('Pengaturan', 'Akun, preferensi, dan data')}
 
-    return `${pageHead('Pengaturan', 'Preferensi, data, dan aplikasi')}
+      <section class="card">
+        <div class="card-head" style="padding-bottom:12px">
+          <h2>${icon('shield')} Akun</h2>
+          <span class="sr-badge">Online</span>
+        </div>
+        <div class="settings-row" style="cursor:default">
+          <span class="sr-ico">${icon('smartphone')}</span>
+          <span class="sr-main"><b>${esc(email)}</b><small>Data hanya bisa diakses dari akun ini</small></span>
+        </div>
+        <button class="settings-row" data-act="logout" style="border-top:1px solid var(--line)">
+          <span class="sr-ico">${icon('x')}</span>
+          <span class="sr-main"><b>Keluar</b><small>Data tetap tersimpan di akun kamu</small></span>
+          ${icon('chevron-right', 'chev')}
+        </button>
+      </section>
 
       <section class="card">
         <div class="card-head" style="padding-bottom:12px"><h2>${icon('sun')} Tampilan</h2></div>
@@ -684,24 +659,19 @@
         <div class="card-head" style="padding-bottom:4px"><h2>${icon('shield')} Data & cadangan</h2></div>
         <button class="settings-row" data-act="export-json">
           <span class="sr-ico">${icon('download')}</span>
-          <span class="sr-main"><b>Ekspor backup (JSON)</b><small>Simpan ke file HP · ${backupLabel}</small></span>
+          <span class="sr-main"><b>Ekspor backup (JSON)</b><small>Simpan salinan ke file HP</small></span>
           ${icon('chevron-right', 'chev')}
         </button>
-        <button class="settings-row" data-act="auto-backup"${abSupported ? '' : ' disabled'}>
-          <span class="sr-ico">${icon('shield')}</span>
-          <span class="sr-main"><b>Backup otomatis ke file</b><small>${esc(abLabel)}</small></span>
-          ${ab.enabled ? '<span class="sr-badge">Aktif</span>' : icon('chevron-right', 'chev')}
-        </button>
-        ${ab.enabled && ab.needsPermission ? `<button class="settings-row" data-act="auto-backup-perm">
-          <span class="sr-ico">${icon('check')}</span>
-          <span class="sr-main"><b>Izinkan akses file backup</b><small>Diperlukan agar backup bisa ditulis lagi</small></span>
-          ${icon('chevron-right', 'chev')}
-        </button>` : ''}
         <button class="settings-row" data-act="import-json">
           <span class="sr-ico">${icon('upload')}</span>
-          <span class="sr-main"><b>Impor backup</b><small>Pulihkan data dari file backup</small></span>
+          <span class="sr-main"><b>Impor backup</b><small>Pulihkan data dari file backup JSON</small></span>
           ${icon('chevron-right', 'chev')}
         </button>
+        ${hasLocal ? `<button class="settings-row" data-act="import-local">
+          <span class="sr-ico">${icon('upload')}</span>
+          <span class="sr-main"><b>Impor data lokal</b><small>Pindahkan data aplikasi offline di HP ini ke akun</small></span>
+          ${icon('chevron-right', 'chev')}
+        </button>` : ''}
         <button class="settings-row" data-act="export-csv">
           <span class="sr-ico">${icon('list')}</span>
           <span class="sr-main"><b>Ekspor CSV</b><small>Buka di Excel / Google Sheets</small></span>
@@ -709,7 +679,7 @@
         </button>
         <button class="settings-row danger" data-act="reset" style="border-top:1px solid var(--line)">
           <span class="sr-ico">${icon('trash')}</span>
-          <span class="sr-main"><b>Hapus semua data</b><small>Motor, catatan, dan pengingat di HP ini</small></span>
+          <span class="sr-main"><b>Hapus semua data akun</b><small>Motor, catatan, dan pengingat di akun ini</small></span>
           ${icon('chevron-right', 'chev')}
         </button>
         <input type="file" id="import-file" accept=".json,application/json" hidden>
@@ -717,37 +687,31 @@
 
       <section class="card">
         <div class="settings-row" style="cursor:default">
-          <span class="sr-ico">${icon('shield')}</span>
-          <span class="sr-main"><b>Penyimpanan lokal</b><small>Data tidak dikirim ke server mana pun</small></span>
-          <span id="storage-info" style="font-size:11px;color:var(--muted);font-weight:650">—</span>
+          <span class="sr-ico">${icon('refresh')}</span>
+          <span class="sr-main"><b>Status sinkronisasi</b><small>Perubahan dikirim otomatis ke akun</small></span>
+          <span id="sync-info" style="font-size:11px;color:var(--muted);font-weight:650">${esc(syncText)}</span>
         </div>
         <div class="settings-row" style="cursor:default;border-top:1px solid var(--line)">
           <span class="sr-ico">${icon('smartphone')}</span>
-          <span class="sr-main"><b>Status koneksi</b><small>Aplikasi tetap jalan tanpa internet</small></span>
+          <span class="sr-main"><b>Status koneksi</b><small>Versi online membutuhkan internet</small></span>
           <span id="net-info" style="font-size:11px;color:var(--muted);font-weight:650">—</span>
         </div>
         <div class="settings-row" style="cursor:default;border-top:1px solid var(--line)">
           <span class="sr-ico">${icon('info')}</span>
-          <span class="sr-main"><b>Versi aplikasi</b><small>MotoLog</small></span>
+          <span class="sr-main"><b>Versi aplikasi</b><small>MotoLog online</small></span>
           <span style="font-size:11px;color:var(--muted);font-weight:650">v${ML.APP_VERSION}</span>
         </div>
       </section>
 
       <p style="text-align:center;font-size:10.5px;color:var(--muted-2);line-height:1.6;padding:4px 24px 10px">
-        MotoLog menyimpan data di browser HP kamu. Lakukan ekspor backup secara berkala, terutama sebelum menghapus data browser atau mengganti HP.
+        Data MotoLog tersimpan di akun Supabase kamu. Ekspor backup berkala tetap disarankan agar kamu punya salinan sendiri.
       </p>`;
   }
 
   function updateSettingsInfo() {
-    const st = document.getElementById('storage-info');
-    if (st) {
-      if (navigator.storage && navigator.storage.estimate) {
-        navigator.storage.estimate().then((est) => {
-          st.textContent = est && est.usage ? ML.fmtBytes(est.usage) : '0 KB';
-        }).catch(() => { st.textContent = '—'; });
-      } else {
-        st.textContent = '—';
-      }
+    const sync = document.getElementById('sync-info');
+    if (sync) {
+      sync.textContent = MLCloud && MLCloud.statusText ? MLCloud.statusText() : '—';
     }
     const net = document.getElementById('net-info');
     if (net) net.textContent = navigator.onLine ? 'Online' : 'Offline';

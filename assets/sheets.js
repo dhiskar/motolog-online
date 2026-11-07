@@ -311,7 +311,7 @@
     const existing = form.dataset.id ? S.records.find((r) => r.id === form.dataset.id) : null;
 
     const rec = {
-      id: existing ? existing.id : ML.uid('r'),
+      id: existing ? existing.id : ML.uid(),
       bikeId: bike.id,
       type,
       date,
@@ -373,7 +373,7 @@
         <div class="photo-prev" id="photo-prev">${photoHTML}</div>
         <div class="pp-main">
           <b>Foto motor</b>
-          <small>Opsional. Foto disimpan di HP kamu.</small>
+          <small>Opsional. Foto disimpan di akun kamu.</small>
           <div style="display:flex;gap:6px;margin-top:7px">
             <button type="button" class="btn soft sm" data-act="pick-photo">${icon('camera')} Pilih foto</button>
             <button type="button" class="btn ghost sm" data-act="clear-photo">Hapus</button>
@@ -422,7 +422,7 @@
     if (!name) { toast('Nama motor wajib diisi', 'bad'); return; }
 
     const existing = form.dataset.id ? ML.bikeById(form.dataset.id) : null;
-    const bike = existing || { id: ML.uid('b'), createdAt: Date.now() };
+    const bike = existing || { id: ML.uid(), createdAt: Date.now() };
 
     Object.assign(bike, {
       name,
@@ -515,7 +515,7 @@
     if (!title) { toast('Judul pengingat wajib diisi', 'bad'); return; }
 
     const existing = form.dataset.id ? S.reminders.find((x) => x.id === form.dataset.id) : null;
-    const r = existing || { id: ML.uid('rem'), bikeId: bike.id, done: false, createdAt: Date.now() };
+    const r = existing || { id: ML.uid(), bikeId: bike.id, done: false, createdAt: Date.now() };
 
     Object.assign(r, {
       title,

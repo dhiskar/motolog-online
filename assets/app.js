@@ -1,13 +1,23 @@
 /* ===========================================================
-   MotoLog — app: event, aksi, ekspor/impor, PWA
+   MotoLog — app: auth, event, aksi, ekspor/impor, PWA
+   Data utama: Supabase. Aplikasi versi online (butuh internet
+   untuk memuat dan menyimpan data).
    =========================================================== */
 'use strict';
 
 (function () {
   const ML = window.ML;
   const S = ML.state;
+  const Cloud = window.MLCloud;
+
+  const authEl = document.getElementById('auth');
+  const appEl = document.getElementById('app');
+  const bootEl = document.getElementById('boot');
 
   let deferredPrompt = null;
+  let authMode = 'signin';
+  let authBusy = false;
+  let starting = false;
 
   /* ---------------- navigasi ---------------- */
   function navigate(to) {
@@ -59,8 +69,6 @@
     }, 1200);
   }
 
-  // Chrome Android 132+ mendukung File System Access API. Pakai picker
-  // "Simpan sebagai" agar file bisa langsung disimpan ke folder pilihan HP.
   async function saveFile(filename, content, opts) {
     opts = opts || {};
     const mime = opts.mime || 'text/plain;charset=utf-8';
@@ -108,10 +116,6 @@
       { mime: 'application/json', label: 'Backup MotoLog (.json)' }
     );
     if (result === 'cancelled') return;
-
-    S.settings.lastBackupAt = new Date().toISOString();
-    ML.persist();
-    if (ML.currentRoute() === 'settings') ML.render();
     ML.toast(result === 'saved' ? 'Backup disimpan ke file' : 'Backup diunduh ke folder Download', 'good');
   }
 
@@ -149,266 +153,274 @@
     ML.toast(result === 'saved' ? 'CSV disimpan ke file' : 'CSV diunduh ke folder Download', 'good');
   }
 
-  /* ---------------- backup otomatis ke file ---------------- */
-  // Menyimpan salinan data ke file JSON pilihan pengguna setiap kali ada
-  // perubahan. Butuh File System Access API + izin akses file. Tanpa API
-  // tersebut, pengguna tetap bisa memakai ekspor manual.
-  const AB_KEY = 'motolog.autobackup.v1';
-  const AB_DB_NAME = 'motolog-fs';
-  const AB_DB_STORE = 'handles';
-  const AB_HANDLE_KEY = 'autobackup';
+  /* ---------------- auth ---------------- */
+  function setAuthMode(mode) {
+    authMode = mode === 'signup' ? 'signup' : 'signin';
+    const title = document.getElementById('auth-title');
+    const sub = document.getElementById('auth-sub');
+    const submit = document.getElementById('auth-submit');
+    const switcher = document.getElementById('auth-switch');
+    const pass = document.querySelector('#auth-form input[name="password"]');
 
-  function abSupported() {
-    return !!(window.showSaveFilePicker && window.isSecureContext);
+    if (title) title.textContent = authMode === 'signup' ? 'Buat akun baru' : 'Masuk ke akun kamu';
+    if (sub) {
+      sub.textContent = authMode === 'signup'
+        ? 'Cukup email dan password. Data motormu akan tersimpan aman di akun ini.'
+        : 'Data motor dan catatan tersimpan di akun, bisa dibuka dari HP atau laptop lain.';
+    }
+    if (submit) {
+      submit.textContent = authMode === 'signup' ? 'Buat akun' : 'Masuk';
+      submit.disabled = authBusy || !CloudSafe('configured');
+    }
+    if (switcher) {
+      switcher.textContent = authMode === 'signup' ? 'Sudah punya akun? Masuk' : 'Belum punya akun? Buat akun';
+    }
+    if (pass) pass.setAttribute('autocomplete', authMode === 'signup' ? 'new-password' : 'current-password');
+    hideAuthError();
   }
 
-  function abStatus() {
-    let parsed = null;
-    try { parsed = JSON.parse(localStorage.getItem(AB_KEY) || 'null'); } catch (e) { parsed = null; }
-    const st = parsed && typeof parsed === 'object' ? parsed : {};
-    return {
-      enabled: !!st.enabled,
-      fileName: typeof st.fileName === 'string' ? st.fileName : '',
-      lastAt: typeof st.lastAt === 'string' ? st.lastAt : null,
-      needsPermission: !!st.needsPermission,
-      error: typeof st.error === 'string' ? st.error : ''
-    };
+  function showAuthError(msg, kind) {
+    const el = document.getElementById('auth-error');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'auth-error' + (kind === 'info' ? ' info' : '');
+    el.hidden = false;
   }
 
-  function abSave(next) {
-    try { localStorage.setItem(AB_KEY, JSON.stringify(next)); } catch (e) { /* diabaikan */ }
+  function hideAuthError() {
+    const el = document.getElementById('auth-error');
+    if (el) el.hidden = true;
   }
 
-  let abDbPromise = null;
-  let abMemoryHandle = null;
-  function abDb() {
-    if (abDbPromise) return abDbPromise;
-    abDbPromise = new Promise(function (resolve, reject) {
-      if (!window.indexedDB) { reject(new Error('indexeddb-tidak-tersedia')); return; }
-      const req = indexedDB.open(AB_DB_NAME, 1);
-      req.onupgradeneeded = function () {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(AB_DB_STORE)) db.createObjectStore(AB_DB_STORE);
-      };
-      req.onsuccess = function () { resolve(req.result); };
-      req.onerror = function () { reject(req.error || new Error('gagal-membuka-indexeddb')); };
-    });
-    return abDbPromise;
+  function translateAuthError(err) {
+    const m = String((err && err.message) || err || '').toLowerCase();
+    if (m.indexOf('invalid login') >= 0 || m.indexOf('invalid credentials') >= 0) return 'Email atau password salah.';
+    if (m.indexOf('already registered') >= 0 || m.indexOf('user already exists') >= 0) return 'Email ini sudah terdaftar. Silakan masuk.';
+    if (m.indexOf('password should be at least') >= 0 || m.indexOf('password is too short') >= 0) return 'Password minimal 6 karakter.';
+    if (m.indexOf('email not confirmed') >= 0) return 'Email belum dikonfirmasi. Cek kotak masuk email kamu.';
+    if (m.indexOf('rate limit') >= 0 || m.indexOf('too many') >= 0) return 'Terlalu banyak percobaan. Coba lagi beberapa saat lagi.';
+    if (m.indexOf('unable to validate email') >= 0 || m.indexOf('invalid email') >= 0) return 'Format email tidak valid.';
+    if (m.indexOf('network') >= 0 || m.indexOf('failed to fetch') >= 0 || m.indexOf('fetch') >= 0) {
+      return 'Tidak bisa menghubungi server. Periksa koneksi internet.';
+    }
+    return (err && err.message) || 'Terjadi kesalahan. Coba lagi.';
   }
 
-  function abGetHandle() {
-    if (abMemoryHandle) return Promise.resolve(abMemoryHandle);
-    return abDb().then(function (db) {
-      return new Promise(function (resolve, reject) {
-        const tx = db.transaction(AB_DB_STORE, 'readonly');
-        const req = tx.objectStore(AB_DB_STORE).get(AB_HANDLE_KEY);
-        req.onsuccess = function () { resolve(req.result || null); };
-        req.onerror = function () { reject(req.error || new Error('gagal-membaca-handle')); };
-      });
-    });
+  function CloudSafe(key) {
+    if (!Cloud) return false;
+    try { return typeof Cloud[key] === 'function' ? !!Cloud[key]() : !!Cloud[key]; } catch (e) { return false; }
   }
 
-  function abStoreHandle(handle, deleting) {
-    if (deleting) abMemoryHandle = null;
-    else abMemoryHandle = handle;
-
-    return abDb().then(function (db) {
-      return new Promise(function (resolve, reject) {
-        const tx = db.transaction(AB_DB_STORE, 'readwrite');
-        const store = tx.objectStore(AB_DB_STORE);
-        if (deleting) store.delete(AB_HANDLE_KEY);
-        else store.put(handle, AB_HANDLE_KEY);
-        tx.oncomplete = function () { resolve('saved'); };
-        tx.onerror = function () { reject(tx.error || new Error('gagal-menulis-handle')); };
-      });
-    }).catch(function () {
-      // IndexedDB tidak tersedia: izin file tetap dipakai selama sesi ini.
-      return 'memory';
-    });
+  function showBoot(msg) {
+    if (!bootEl) return;
+    bootEl.hidden = false;
+    if (authEl) authEl.hidden = true;
+    if (appEl) appEl.hidden = true;
+    const p = document.getElementById('boot-msg');
+    if (p) p.textContent = msg || 'Memuat…';
+    const retry = bootEl.querySelector('[data-act="retry-boot"]');
+    if (retry) retry.hidden = true;
   }
 
-  function abCheckPermission(handle) {
-    if (!handle || !handle.queryPermission) return Promise.resolve('granted');
-    return handle.queryPermission({ mode: 'readwrite' }).catch(function () { return 'prompt'; });
+  function showBootError(msg) {
+    if (!bootEl) return;
+    bootEl.hidden = false;
+    if (authEl) authEl.hidden = true;
+    if (appEl) appEl.hidden = true;
+    const p = document.getElementById('boot-msg');
+    if (p) p.textContent = msg;
+    const retry = bootEl.querySelector('[data-act="retry-boot"]');
+    if (retry) retry.hidden = false;
   }
 
-  let abTimer = null;
-  let abWriting = false;
-  let abAgain = false;
-  let abErrorShown = false;
+  function showAuth() {
+    if (bootEl) bootEl.hidden = true;
+    if (appEl) appEl.hidden = true;
+    if (!authEl) return;
+    authEl.hidden = false;
+    setAuthMode(authMode);
 
-  function abSchedule() {
-    if (!abStatus().enabled) return;
-    if (abTimer) clearTimeout(abTimer);
-    abTimer = setTimeout(function () { abTimer = null; abFlush(); }, 800);
+    if (!Cloud || !CloudSafe('configured')) {
+      const msg = Cloud ? Cloud.configError() : 'Modul cloud gagal dimuat. Muat ulang halaman.';
+      showAuthError(msg);
+      const submit = document.getElementById('auth-submit');
+      if (submit) submit.disabled = true;
+    }
+    const email = document.querySelector('#auth-form input[name="email"]');
+    if (email && !isStandaloneSmall()) {
+      // Fokus hanya di desktop agar keyboard HP tidak langsung terbuka.
+      setTimeout(() => { try { email.focus({ preventScroll: true }); } catch (e) { /* diabaikan */ } }, 120);
+    }
   }
 
-  async function abFlush() {
-    const st = abStatus();
-    if (!st.enabled) return;
-    if (abWriting) { abAgain = true; return; }
-    abWriting = true;
+  function isStandaloneSmall() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+      window.navigator.standalone === true;
+  }
+
+  async function handleAuthSubmit(form) {
+    if (authBusy || starting) return;
+    const email = String(form.elements.email.value || '').trim();
+    const password = String(form.elements.password.value || '');
+    const submit = document.getElementById('auth-submit');
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showAuthError('Masukkan alamat email yang valid.');
+      return;
+    }
+    if (password.length < 6) {
+      showAuthError('Password minimal 6 karakter.');
+      return;
+    }
+
+    authBusy = true;
+    if (submit) { submit.disabled = true; submit.textContent = 'Memproses…'; }
+    hideAuthError();
 
     try {
-      const handle = await abGetHandle();
-      if (!handle) {
-        abSave(Object.assign({}, st, { enabled: false, error: 'File backup tidak ditemukan' }));
-        return;
+      if (authMode === 'signup') {
+        const data = await Cloud.signUp(email, password);
+        if (data && data.session) {
+          await startApp(data.session);
+        } else {
+          setAuthMode('signin');
+          const f = document.getElementById('auth-form');
+          if (f) f.elements.email.value = email;
+          showAuthError('Akun dibuat. Cek email untuk konfirmasi, lalu masuk.', 'info');
+        }
+      } else {
+        const data = await Cloud.signIn(email, password);
+        await startApp(data.session);
       }
-
-      const perm = await abCheckPermission(handle);
-      if (perm !== 'granted') {
-        abSave(Object.assign({}, st, { needsPermission: true }));
-        return;
-      }
-
-      const payload = buildPayload();
-      const writable = await handle.createWritable();
-      await writable.write(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-      await writable.close();
-
-      abSave({
-        enabled: true,
-        fileName: st.fileName || handle.name || 'motolog-autobackup.json',
-        lastAt: payload.exportedAt,
-        needsPermission: false,
-        error: ''
-      });
-      abErrorShown = false;
     } catch (e) {
-      const name = e && e.name ? e.name : '';
-      const needsPermission = name === 'NotAllowedError' || name === 'SecurityError';
-      abSave(Object.assign({}, st, {
-        needsPermission: needsPermission || st.needsPermission,
-        error: name || 'Gagal menulis file backup'
-      }));
-      if (!abErrorShown && !needsPermission) {
-        abErrorShown = true;
-        ML.toast('Backup otomatis gagal. Cek izin file di Pengaturan.', 'bad');
-      }
-      if (ML.currentRoute() === 'settings') ML.render();
+      showAuthError(translateAuthError(e));
     } finally {
-      abWriting = false;
-      if (abAgain) { abAgain = false; abSchedule(); }
+      authBusy = false;
+      if (appEl && appEl.hidden) {
+        if (submit) submit.disabled = !CloudSafe('configured');
+        if (submit && document.getElementById('auth-error') && !document.getElementById('auth-error').hidden) {
+          submit.textContent = authMode === 'signup' ? 'Buat akun' : 'Masuk';
+        } else if (submit) {
+          submit.textContent = authMode === 'signup' ? 'Buat akun' : 'Masuk';
+        }
+      }
     }
   }
 
-  async function enableAutoBackup() {
-    if (!abSupported()) {
-      ML.toast('Browser ini belum mendukung backup otomatis. Gunakan ekspor manual.', 'bad');
-      return;
-    }
-
-    let handle;
+  /* ---------------- boot / start ---------------- */
+  async function startApp(session) {
+    if (!session || !session.user || starting) return;
+    starting = true;
+    showBoot('Memuat data akun…');
     try {
-      handle = await window.showSaveFilePicker({
-        suggestedName: 'motolog-autobackup.json',
-        types: [{
-          description: 'Backup otomatis MotoLog (.json)',
-          accept: { 'application/json': ['.json'] }
-        }]
-      });
+      Cloud.setUser(session.user);
+      const res = await Cloud.loadAll();
+      ML.replaceState(res.state);
+      Cloud.markClean(ML.state);
+      applyTheme();
+      if (bootEl) bootEl.hidden = true;
+      if (authEl) authEl.hidden = true;
+      if (appEl) appEl.hidden = false;
+      ML.render();
+      if (!location.hash) location.hash = '#/dash';
+      const topbar = document.getElementById('topbar');
+      if (topbar && window.scrollY > 4) topbar.classList.add('scrolled');
     } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      ML.toast('Gagal memilih file backup', 'bad');
-      return;
+      const detail = (e && e.message) ? e.message : '';
+      const net = navigator.onLine === false || /fetch|network|load failed/i.test(detail);
+      showBootError(net
+        ? 'Tidak bisa memuat data. Versi online butuh koneksi internet. Periksa koneksi lalu coba lagi.'
+        : 'Gagal memuat data akun' + (detail ? ': ' + detail : '.'));
+    } finally {
+      starting = false;
     }
-
-    try {
-      await abStoreHandle(handle, false);
-    } catch (e) {
-      ML.toast('Browser ini tidak bisa menyimpan izin file', 'bad');
-      return;
-    }
-
-    abSave({
-      enabled: true,
-      fileName: handle.name || 'motolog-autobackup.json',
-      lastAt: null,
-      needsPermission: false,
-      error: ''
-    });
-    if (ML.currentRoute() === 'settings') ML.render();
-
-    await abFlush();
-    const st = abStatus();
-    ML.render();
-    if (st.lastAt) ML.toast('Backup otomatis aktif. Setiap perubahan langsung ditulis ke file.', 'good');
-    else ML.toast('File dipilih. Izinkan akses agar backup bisa ditulis.', 'bad');
   }
 
-  async function disableAutoBackup() {
+  async function boot() {
+    applyTheme();
+    if (!Cloud) {
+      showBootError('Modul cloud gagal dimuat. Muat ulang halaman.');
+      return;
+    }
+    if (!CloudSafe('configured')) {
+      showAuth();
+      return;
+    }
+    showBoot('Menghubungkan…');
+    try {
+      const session = await Cloud.getSession();
+      if (session) {
+        await startApp(session);
+      } else {
+        showAuth();
+      }
+    } catch (e) {
+      showBootError('Tidak bisa menghubungi server. Periksa koneksi internet lalu coba lagi.');
+    }
+  }
+
+  async function logout() {
     const ok = await ML.askConfirm({
-      title: 'Matikan backup otomatis?',
-      message: 'Data tetap tersimpan di browser, tetapi tidak lagi ditulis otomatis ke file.',
-      okText: 'Matikan'
+      title: 'Keluar dari akun?',
+      message: 'Data tetap tersimpan di akun kamu. Kamu bisa masuk lagi kapan saja.',
+      okText: 'Keluar',
+      danger: false
+    });
+    if (!ok) return;
+    try {
+      await Cloud.signOut();
+    } catch (e) { /* sesi lokal tetap dibersihkan */ }
+    location.reload();
+  }
+
+  /* ---------------- impor / hapus ---------------- */
+  async function replaceCloudData(next, successMsg) {
+    const data = ML.normalize(next);
+    ML.toast('Mengimpor data…');
+    try {
+      await Cloud.importAll(data);
+      ML.replaceState(data);
+      applyTheme();
+      ML.render();
+      ML.toast(successMsg, 'good');
+      return true;
+    } catch (e) {
+      const detail = translateAuthError(e);
+      ML.toast('Gagal mengimpor: ' + detail, 'bad');
+      return false;
+    }
+  }
+
+  function localDataSummary(data) {
+    return (data.bikes || []).length + ' motor, ' + (data.records || []).length + ' catatan, ' +
+      (data.reminders || []).length + ' pengingat';
+  }
+
+  async function importLocalData() {
+    const local = ML.readLocalState();
+    if (!local) {
+      ML.toast('Tidak ada data lokal di HP ini', 'bad');
+      return;
+    }
+    if (!local.bikes.length && !local.records.length && !local.reminders.length) {
+      ML.toast('Data lokal kosong', 'bad');
+      return;
+    }
+
+    const ok = await ML.askConfirm({
+      title: 'Impor data lokal?',
+      message: 'Data lokal di HP ini (' + localDataSummary(local) + ') akan MENGGANTI seluruh data di akun ini.',
+      okText: 'Impor',
+      danger: false
     });
     if (!ok) return;
 
-    abSave({ enabled: false, fileName: abStatus().fileName, lastAt: abStatus().lastAt, needsPermission: false, error: '' });
-    try { await abStoreHandle(null, true); } catch (e) { /* diabaikan */ }
-    if (abTimer) { clearTimeout(abTimer); abTimer = null; }
-    ML.render();
-    ML.toast('Backup otomatis dimatikan');
-  }
-
-  async function requestAutoBackupPermission() {
-    try {
-      const handle = await abGetHandle();
-      if (!handle) {
-        ML.toast('File backup tidak ditemukan. Aktifkan ulang backup otomatis.', 'bad');
-        return;
-      }
-      const perm = await handle.requestPermission({ mode: 'readwrite' });
-      if (perm !== 'granted') {
-        ML.toast('Izin akses file belum diberikan', 'bad');
-        return;
-      }
-      abSave(Object.assign({}, abStatus(), { needsPermission: false, error: '' }));
-      await abFlush();
+    const done = await replaceCloudData(local, 'Data lokal berhasil diimpor ke akun');
+    if (done) {
+      try { localStorage.removeItem('motolog.state.v1'); } catch (e) { /* diabaikan */ }
       ML.render();
-      ML.toast(abStatus().lastAt ? 'Izin diberikan, backup sudah diperbarui' : 'Izin diberikan', 'good');
-    } catch (e) {
-      ML.toast('Gagal meminta izin file', 'bad');
     }
   }
-
-  async function initAutoBackup() {
-    const st = abStatus();
-    if (!st.enabled) return;
-    if (!abSupported()) {
-      abSave(Object.assign({}, st, { enabled: false, error: 'Browser tidak mendukung' }));
-      if (ML.currentRoute() === 'settings') ML.render();
-      return;
-    }
-
-    try {
-      const handle = await abGetHandle();
-      if (!handle) {
-        abSave(Object.assign({}, st, { enabled: false, error: 'File backup tidak ditemukan' }));
-        ML.render();
-        ML.toast('Backup otomatis berhenti. Aktifkan ulang di Pengaturan.', 'bad');
-        return;
-      }
-      const perm = await abCheckPermission(handle);
-      abSave(Object.assign({}, st, { needsPermission: perm !== 'granted', error: '' }));
-      if (perm === 'granted') abFlush();
-      else if (ML.currentRoute() === 'settings' || ML.currentRoute() === 'dash') ML.render();
-    } catch (e) {
-      /* IndexedDB tidak tersedia; biarkan data tetap di localStorage */
-    }
-  }
-
-  ML.autoBackup = {
-    supported: abSupported,
-    status: abStatus,
-    enable: enableAutoBackup,
-    disable: disableAutoBackup,
-    requestPermission: requestAutoBackupPermission,
-    schedule: abSchedule,
-    flush: abFlush
-  };
-  ML.onPersist = abSchedule;
 
   async function importFile(file) {
     if (!file) return;
@@ -419,36 +431,40 @@
       ML.toast('File backup tidak valid', 'bad');
       return;
     }
-    const data = parsed && parsed.data ? parsed.data : parsed;
-    if (!data || !Array.isArray(data.bikes) || !Array.isArray(data.records)) {
+    const raw = parsed && parsed.data ? parsed.data : parsed;
+    if (!raw || !Array.isArray(raw.bikes) || !Array.isArray(raw.records)) {
       ML.toast('Struktur backup tidak dikenali', 'bad');
       return;
     }
 
+    const data = ML.remapIds(raw);
     const ok = await ML.askConfirm({
       title: 'Impor backup?',
-      message: `Data saat ini (${S.bikes.length} motor, ${S.records.length} catatan) akan diganti dengan isi file backup.`,
+      message: `Data akun saat ini (${S.bikes.length} motor, ${S.records.length} catatan) akan diganti dengan isi file backup (${localDataSummary(data)}).`,
       okText: 'Impor',
       danger: false
     });
     if (!ok) return;
 
-    ML.replaceState(data);
-    ML.persist();
-    ML.render();
-    ML.toast('Backup berhasil dipulihkan', 'good');
+    await replaceCloudData(data, 'Backup berhasil dipulihkan ke akun');
   }
 
   async function resetAll() {
     const ok = await ML.askConfirm({
       title: 'Hapus semua data?',
-      message: 'Semua motor, catatan, dan pengingat di HP ini akan dihapus permanen. Sebaiknya ekspor backup terlebih dahulu.',
+      message: 'Semua motor, catatan, dan pengingat di akun ini akan dihapus permanen. Sebaiknya ekspor backup terlebih dahulu.',
       okText: 'Hapus semua'
     });
     if (!ok) return;
-    ML.resetState();
-    ML.render();
-    ML.toast('Semua data dihapus');
+    try {
+      await Cloud.clearAll();
+      ML.replaceState(ML.defaultState());
+      applyTheme();
+      ML.render();
+      ML.toast('Semua data akun dihapus');
+    } catch (e) {
+      ML.toast('Gagal menghapus: ' + translateAuthError(e), 'bad');
+    }
   }
 
   /* ---------------- motor ---------------- */
@@ -548,9 +564,9 @@
 
     ML.showSheet({
       title: 'Instal MotoLog',
-      body: `<p class="confirm-msg">Supaya bisa dibuka seperti aplikasi dan tetap jalan tanpa internet:</p>
+      body: `<p class="confirm-msg">Supaya bisa dibuka cepat seperti aplikasi:</p>
         <ol class="steps">${steps.map((s) => `<li>${ML.esc(s)}</li>`).join('')}</ol>
-        <p class="field hint">Aplikasi harus dibuka lewat alamat HTTPS, misalnya GitHub Pages. Data tetap tersimpan di HP kamu.</p>`,
+        <p class="field hint">Aplikasi harus dibuka lewat alamat HTTPS. Data tetap tersimpan di akun kamu.</p>`,
       foot: `<button class="btn primary block" type="button" data-act="close-sheet">Mengerti</button>`
     });
   }
@@ -667,21 +683,6 @@
       case 'export-json':
         exportJSON();
         break;
-      case 'auto-backup': {
-        const ab = ML.autoBackup.status();
-        if (ab.enabled && ab.needsPermission) requestAutoBackupPermission();
-        else if (ab.enabled) disableAutoBackup();
-        else enableAutoBackup();
-        break;
-      }
-      case 'auto-backup-perm':
-        requestAutoBackupPermission();
-        break;
-      case 'dismiss-backup':
-        S.settings.backupNudgeAt = new Date().toISOString();
-        ML.persist();
-        ML.render();
-        break;
       case 'export-csv':
         exportCSV();
         break;
@@ -690,8 +691,20 @@
         if (input) input.click();
         break;
       }
+      case 'import-local':
+        importLocalData();
+        break;
       case 'reset':
         resetAll();
+        break;
+      case 'logout':
+        logout();
+        break;
+      case 'auth-mode':
+        setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+        break;
+      case 'retry-boot':
+        boot();
         break;
       case 'pick-photo': {
         const form = el.closest('form');
@@ -718,7 +731,8 @@
     if (!form) return;
     e.preventDefault();
     const kind = form.dataset.form;
-    if (kind === 'record') ML.saveRecord(form);
+    if (kind === 'auth') handleAuthSubmit(form);
+    else if (kind === 'record') ML.saveRecord(form);
     else if (kind === 'bike') ML.saveBike(form);
     else if (kind === 'odo') ML.saveOdo(form);
     else if (kind === 'reminder') ML.saveReminder(form);
@@ -826,14 +840,21 @@
     if (topbar) topbar.classList.toggle('scrolled', window.scrollY > 4);
   }, { passive: true });
 
-  window.addEventListener('online', function () { ML.updateSettingsInfo(); });
-  window.addEventListener('offline', function () { ML.updateSettingsInfo(); });
-
-  // Tulis backup terakhir saat aplikasi ditinggalkan (best-effort).
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden') abFlush();
+  window.addEventListener('online', function () {
+    ML.updateSettingsInfo();
+    if (Cloud) Cloud.flush();
   });
-  window.addEventListener('pagehide', function () { abFlush(); });
+  window.addEventListener('offline', function () {
+    ML.updateSettingsInfo();
+  });
+
+  // Pastikan perubahan terakhir sempat dikirim saat aplikasi ditinggalkan.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden' && Cloud) Cloud.flush();
+  });
+  window.addEventListener('pagehide', function () {
+    if (Cloud) Cloud.flush();
+  });
 
   if (window.matchMedia) {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -847,31 +868,40 @@
     else if (mq.addListener) mq.addListener(onChange);
   }
 
-  /* ---------------- init ---------------- */
-  function requestPersistentStorage() {
-    if (!navigator.storage || !navigator.storage.persist) return;
-    navigator.storage.persisted()
-      .then(function (persisted) {
-        if (!persisted) navigator.storage.persist().catch(function () { /* diabaikan */ });
-      })
-      .catch(function () { /* diabaikan */ });
+  /* ---------------- status sinkronisasi -> UI ---------------- */
+  if (Cloud && typeof Cloud.onStatus === 'function') {
+    Cloud.onStatus(function () {
+      if (!ML.currentRoute || ML.currentRoute() !== 'settings') return;
+      if (typeof ML.updateSettingsInfo === 'function') ML.updateSettingsInfo();
+    });
   }
 
+  /* ---------------- sesi ---------------- */
+  if (Cloud && typeof Cloud.onAuth === 'function') {
+    Cloud.onAuth(function (event) {
+      // Callback ini berjalan di dalam lock Supabase; jangan panggil
+      // method Supabase lain langsung dari sini.
+      if (event === 'SIGNED_OUT') {
+        setTimeout(function () {
+          if (appEl && !appEl.hidden) location.reload();
+        }, 0);
+      }
+    });
+  }
+
+  /* ---------------- init ---------------- */
+  ML.localDataAvailable = function () {
+    try { return ML.hasLocalState(); } catch (e) { return false; }
+  };
+
   function init() {
-    ML.loadState();
-    requestPersistentStorage();
     applyTheme();
-    ML.render();
-    initAutoBackup();
-    if (window.scrollY > 4) {
-      const topbar = document.getElementById('topbar');
-      if (topbar) topbar.classList.add('scrolled');
-    }
+    boot();
   }
 
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('./sw.js').catch(function () { /* offline mode unavailable */ });
+      navigator.serviceWorker.register('./sw.js').catch(function () { /* cache app shell tidak tersedia */ });
     });
   }
 

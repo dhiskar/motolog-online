@@ -1,7 +1,7 @@
 {
   "name": "MotoLog — Catatan & Perawatan Motor",
   "short_name": "MotoLog",
-  "description": "Catat ganti oli, servis, bensin, dan pengeluaran sepeda motor. Data tersimpan lokal di HP dan bisa dipakai offline.",
+  "description": "Catat ganti oli, servis, bensin, dan pengeluaran sepeda motor. Data tersimpan di akun dan bisa dibuka dari perangkat lain.",
   "lang": "id",
   "dir": "ltr",
   "start_url": "./",
